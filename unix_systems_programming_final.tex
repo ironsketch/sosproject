@@ -1,0 +1,142 @@
+\documentclass{article}
+\usepackage{fullpage}
+\usepackage[utf8]{inputenc}
+\usepackage{listings}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{color}
+
+\title{Unix Systems Programming Final}
+\author{David Weinman}
+%\date{June 2014}
+
+\begin{document}
+
+\maketitle
+
+\section{Suppose we have the following code, what happens and why?}
+\begin{lstlisting}[language=C, basicstyle=\ttfamily\footnotesize, showstringspaces=false, stringstyle=\color{Salmon}, commentstyle=\itshape\color{magenta},  keywordstyle=\color{Bittersweet}]
+int fd[2];
+int i, myint;
+
+
+pipe(fd);
+dup2(fd[0], STDIN_FILENO);
+dup2(fd[1], STDOUT_FILENO);
+close(fd[0]);
+close(fd[1]);
+
+for(i=0; i<=10; i++) {
+	read(STDIN_FILENO, &myint, sizeof(myint));
+	write(STDOUT_FILENO, &i, sizeof(i));
+	fprintf(stderr, "%d\n", myint);
+}
+\end{lstlisting}
+\textbf{A:} The program hangs and never completes because the call to read after the loop from 0 to 10 will never return as no text has been written to the pipe yet. \\
+\\
+\section{Suppose that we have the following code, what is wrong with this code and why? What behavior may happen? What is the purpose to the line labeled (a)?}
+\begin{lstlisting}[language=C, basicstyle=\ttfamily\footnotesize, showstringspaces=false, stringstyle=\color{Salmon}, commentstyle=\itshape\color{magenta},  keywordstyle=\color{Bittersweet}]
+int i;
+
+pthread_t tids[numthreads];
+
+tids[0] = pthread_self());
+
+for (i=1; i<numthreads; i++) {
+	if ((error = pthread_create(&tids[i], NULL, f, NULL)))
+		fprintf(stderr, "Failed to create the thread\n");
+	tids[i] = pthread_self();		// (a)
+}
+
+for (i = 0; i < numthreads; i++) {
+	if (error = pthread_join(tids[i], NULL)))
+		fprintf(stderr, "Failed to join\n");
+}
+\end{lstlisting}
+\textbf{A1:} In the condition following the start of the first loop the thread ID of the newly created thread is assigned to \texttt{tids[i]}. Right after this the contents of \texttt{tids[i]} is overwritten with the thread calling \texttt{pthread\_create}'s thread ID.
+
+When the second loop is reached and \texttt{pthread\_join} is called, because the whole \texttt{tids} array contains the thread ID of the parent thread, \texttt{pthread\_join} returns a \texttt{EDEADLK} because the first argument of \texttt{pthread\_join} contains the calling thread's thread ID. \\
+\\
+\textbf{A2:} The parent thread spawns \texttt{numthreads} threads and then prints "Failed to join" when it receives an \texttt{EDEADLK} from the call to \texttt{pthread\_join}. \\
+\\
+\textbf{A3:} To assign the thread ID of the calling thread to \texttt{tids[i]}. \\
+\\
+\section{What is the problem with the following code if the function f is used in a muti-threaded program?}
+\begin{lstlisting}[language=C, basicstyle=\ttfamily\footnotesize, showstringspaces=false, stringstyle=\color{Salmon}, commentstyle=\itshape\color{magenta},  keywordstyle=\color{Bittersweet}]
+#include <stdlib.h>
+#include <unistd.h>
+#include "restart.h"
+
+int *b;
+
+void * f (void *arg) {
+	int ifd;
+	int ofd;
+
+	ifd = *((int *) (arg));
+	ofd = *((int *) (arg) + 1);
+
+	if ((b = (int *)malloc(sizeof(int))) == NULL)
+		return NULL;
+
+	*b = g(ifd, ofd);
+
+	r_close(ifd);
+	r_clode(ofd);
+
+}
+\end{lstlisting}
+The shared variable b may be modified by another thread running f. \\
+\\
+\section{What is the problem in the following code?}
+\begin{lstlisting}[language=C, basicstyle=\ttfamily\footnotesize, showstringspaces=false, stringstyle=\color{Salmon}, commentstyle=\itshape\color{magenta},  keywordstyle=\color{Bittersweet}]
+#include <pthread.h>
+#include <stdio.h>
+#include <string.h>
+
+#define NUMTHREADS 10
+
+static void * p(void *a) {
+	fprintf(stderr, "Received %d\n", *(int *)a);
+	return NULL;
+}
+
+int main(void) {
+	int error;
+	int i,j;
+	pthread_t tid[NUMTHREADS];
+
+	for(i=0; i<NUMTHREADS; i++)
+		if (error = pthread_created(tid+i, NULL, p, (void *)&i)) {
+			fprintf(stderr, "Failed to create thread\n");
+			tid[i] = pthread_self();
+		}
+
+	for(j=0; j<NUMTHREADS; j++) {
+		if (pthread_equal(pthread_self(), tid[j[]))
+			continue;
+		if (error = pthread_join(tid[j], NULL))
+			fprintf(stderr, "Failed to join\n");
+	}
+	return 0;
+}
+\end{lstlisting}
+The thread calling \texttt{pthread\_create} in the first loop may change the contents of the variable at the given address "\texttt{\&i}" after spawning the thread, so the new thread may print a modified value when it gets to the call to \texttt{fprintf}. \\
+\\
+\section{What is priority inversion, and why is it bad? Illustrate with an example. Use your example to illustrate one technique that avoids priority inversion.}
+\textbf{A1:} Priority Inversion is the incorrect scheduling behavior that occurs when a lower priority process is run before a higher priority process.
+
+Priority Inversions are bad because the higher and lower priority processes may run with in-proper input and the higher priority process's task will go uncompleted. \\
+\\
+\textbf{A2:} The Mars Pathfinder mission involved a land-rover which sent images and soil sample data back to Earth. The Mars land-rover ran a real-time embedded systems kernel that provided preemptive priority scheduling for threads. The land-rover also contained an information bus for shared memory between different parts of the rover. \\
+\\
+Access to the bus was synchronized with mutual exclusion locks (mutexes). \\
+\\
+A bus management task frequently ran with high priority to move certain kinds of data in and out of the bus, a meteorological data gathering task ran as an infrequent low priority thread, and used the information bus to publish its data, and a long running communications task ran with medium priority. \\
+\\
+Seldomly it was possible for an interrupt to occur that caused  the (medium priority) communications task to be scheduled during the short period of time that the (high priority) bus management task was blocked waiting for the (low priority) meteorological data gathering thread. \\
+\\
+Thus, the lower priority communications task would be scheduled before higher priority bus management task. \\
+\\
+\textbf{A3:} To solve the problem described in the example above, Engineers working on the Mars Pathfinder made the mutex for the information bus inherit the priority of the caller which 
+in this case is the high priority bus management thread. This forced the low priority meteorological thread to inherit the high priority thereby making the communications thread correctly wait for the meteorological and bus management threads.
+\end{document}
